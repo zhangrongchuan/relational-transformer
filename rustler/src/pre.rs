@@ -236,7 +236,9 @@ pub fn main(cli: Cli) {
                 df = cast_col_to_bool(df, "WillGetBadge").unwrap();
             }
             if table_name == "posts" {
-                df = df.drop("AcceptedAnswerId").unwrap();
+                if df.get_column_names().iter().any(|c| c.as_str() == "AcceptedAnswerId") {
+                    df = df.drop("AcceptedAnswerId").unwrap();
+                }
             }
         }
 
@@ -340,7 +342,8 @@ pub fn main(cli: Cli) {
                     table.col_stats.push(ColStat { mean, std });
                 }
                 DataType::Datetime(u, _) => {
-                    assert!(*u == TimeUnit::Nanoseconds);
+                    // assert!(*u == TimeUnit::Nanoseconds);
+                    assert!(matches!(u,TimeUnit::Nanoseconds | TimeUnit::Microseconds | TimeUnit::Milliseconds));
                     let col = col.cast(&DataType::Float64).unwrap().drop_nulls();
                     let col = col.filter(&col.is_not_nan().unwrap()).unwrap();
                     dt_cnt += col.len();
@@ -582,7 +585,8 @@ pub fn main(cli: Cli) {
                         node.class_value_idx.push(-1);
                     }
                     AnyValue::Datetime(val, unit, _) => {
-                        assert!(unit == TimeUnit::Nanoseconds);
+                        // assert!(unit == TimeUnit::Nanoseconds);
+                        assert!(matches!(unit,TimeUnit::Nanoseconds | TimeUnit::Microseconds | TimeUnit::Milliseconds));
                         let val = (val as f64 - dt_mean) / dt_std;
                         node.boolean_values.push(0.0);
                         node.number_values.push(0.0);
