@@ -79,6 +79,7 @@ class RelationalDataset(Dataset):
                 if f"{table_name}:Db" in table_info
                 else f"{table_name}:{split}"
             )
+            # print(table_info_key)
             info = table_info[table_info_key]
             node_idx_offset = info["node_idx_offset"]
             num_nodes = info["num_nodes"]

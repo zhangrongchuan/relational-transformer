@@ -227,6 +227,8 @@ class RelationalTransformer(nn.Module):
             x = block(x, block_masks)
 
         x = self.norm_out(x)
+        print(f"Final x shape: {x.shape}")
+        # print(f"Final x:", x)
 
         loss_out = x.new_zeros(())
         yhat_out = {"number": None, "text": None, "datetime": None, "boolean": None}
@@ -237,6 +239,8 @@ class RelationalTransformer(nn.Module):
 
         for i, t in enumerate(["number", "text", "datetime", "boolean"]):
             yhat = self.dec_dict[t](x)  # (B,S, D_t)
+            # print(f"{t} yhat:", yhat)
+            print(f"{t} yhat shape:", yhat.shape)
             y = batch[f"{t}_values"]  # (B,S, D_y)
             sem_type_mask = (sem_types == i) & masks  # (B,S) mask for this type
 

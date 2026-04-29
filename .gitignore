@@ -8,3 +8,5 @@ __pycache__
 doc.md
 .codex
 data_analysis.ipynb
+*.sh
+*.log

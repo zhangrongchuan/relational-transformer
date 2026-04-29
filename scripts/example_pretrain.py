@@ -15,9 +15,10 @@ if __name__ == "__main__":
         seed=0,
         # data
         train_tasks=[t for t in all_tasks if t[0] != "rel-amazon"],
+        # train_tasks=[t for t in all_tasks if t[0] not in {"rel-amazon", "rel-event", "rel-trial"}],
         eval_tasks=[t for t in forecast_tasks if t[0] == "rel-amazon"],
-        batch_size=32,
-        num_workers=8,
+        batch_size=256,
+        num_workers=2,
         max_bfs_width=256,
         # optimization
         lr=1e-3,

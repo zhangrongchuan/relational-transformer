@@ -34,7 +34,7 @@ class TextEmbedder:
 def main(
     dataset_name,
     device=None,
-    batch_size=8192,
+    batch_size=98304,
     embedding_model="all-MiniLM-L12-v2",
 ):
     if device is None:

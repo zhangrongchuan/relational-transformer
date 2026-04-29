@@ -27,9 +27,16 @@ scikit-learn = "<1.6.0"
 polars = "*"
 maturin_import_hook = "*"
 matplotlib = "*"
+torch-geometric = ">=2.7.0,<3"
+torch-scatter = ">=2.1.2"
 
 [tool.pixi.dependencies]
 rust = "*"
 pygraphviz = "*"
 uv = "*"
+
+[tool.pixi.pypi-options]
+find-links = [
+  { url = "https://data.pyg.org/whl/torch-2.6.0+cu124.html" },
+]
 
