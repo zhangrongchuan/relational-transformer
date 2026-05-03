@@ -28,15 +28,9 @@ polars = "*"
 maturin_import_hook = "*"
 matplotlib = "*"
 torch-geometric = ">=2.7.0,<3"
-torch-scatter = ">=2.1.2"
+torch-scatter = { url = "https://data.pyg.org/whl/torch-2.6.0%2Bcu124/torch_scatter-2.1.2%2Bpt26cu124-cp312-cp312-linux_x86_64.whl" }
 
 [tool.pixi.dependencies]
 rust = "*"
 pygraphviz = "*"
 uv = "*"
-
-[tool.pixi.pypi-options]
-find-links = [
-  { url = "https://data.pyg.org/whl/torch-2.6.0+cu124.html" },
-]
-

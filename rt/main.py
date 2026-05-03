@@ -94,11 +94,19 @@ def main(
     d_model,
     num_heads,
     d_ff,
+    use_token_rel=False,
+    token_rel_num_layers=4,
+    token_rel_hidden_dim=256,
+    same_col_max_neighbors=32,
+    token_rel_aux_weight=0.0,
+    token_rel_gate_lr=None,
+    freeze_rt=False,
 ):
     seed_everything(seed)
 
     ddp = "LOCAL_RANK" in os.environ
-    device = "cuda"
+    # device = "cuda"
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if ddp:
         os.environ["OMP_NUM_THREADS"] = f"{num_workers}"
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
@@ -109,6 +117,20 @@ def main(
     else:
         rank = 0
         world_size = 1
+
+    if use_token_rel and batch_size != 1:
+        raise ValueError(
+            "The first TokenRelNBFNet integration supports only batch_size=1. "
+            f"Got batch_size={batch_size}."
+        )
+    if use_token_rel and compile_:
+        compile_ = False
+        if rank == 0:
+            print("Disabling torch.compile because use_token_rel=True.")
+    if not use_token_rel and token_rel_aux_weight:
+        raise ValueError("token_rel_aux_weight requires use_token_rel=True.")
+    if not use_token_rel and token_rel_gate_lr is not None:
+        raise ValueError("token_rel_gate_lr requires use_token_rel=True.")
 
     if rank == 0:
         run = wandb.init(project=project, config=locals())
@@ -162,7 +184,7 @@ def main(
                 eval_dataset,
                 batch_size=None,
                 num_workers=num_workers,
-                persistent_workers=True,
+                persistent_workers=num_workers > 0,
                 pin_memory=True,
                 in_order=True,
             )
@@ -173,11 +195,22 @@ def main(
         d_text=d_text,
         num_heads=num_heads,
         d_ff=d_ff,
+        use_token_rel=use_token_rel,
+        token_rel_num_layers=token_rel_num_layers,
+        token_rel_hidden_dim=token_rel_hidden_dim,
+        same_col_max_neighbors=same_col_max_neighbors,
+        token_rel_aux_weight=token_rel_aux_weight,
     )
     if load_ckpt_path is not None:
         load_ckpt_path = Path(load_ckpt_path).expanduser()
         state_dict = torch.load(load_ckpt_path, map_location="cpu")
-        net.load_state_dict(state_dict)
+        incompatible = net.load_state_dict(state_dict, strict=not use_token_rel)
+        if use_token_rel and rank == 0:
+            print(
+                "Loaded checkpoint with "
+                f"{len(incompatible.missing_keys)} missing keys"
+            )
+            print(f"and {len(incompatible.unexpected_keys)} unexpected keys.")
 
     if rank == 0:
         param_count = sum(p.numel() for p in net.parameters())
@@ -185,9 +218,45 @@ def main(
 
     net = net.to(device)
     net = net.to(torch.bfloat16)
+    if use_token_rel:
+        net.keep_token_rel_float()
+    if freeze_rt:
+        if not use_token_rel:
+            raise ValueError("freeze_rt=True requires use_token_rel=True.")
+        net.freeze_rt_parameters()
+
+    trainable_params = [p for p in net.parameters() if p.requires_grad]
+    if use_token_rel and token_rel_gate_lr is not None:
+        gate_params = [p for p in net.token_rel_gate.parameters() if p.requires_grad]
+        branch_params = [
+            p for p in net.token_rel_branch.parameters() if p.requires_grad
+        ]
+        token_rel_param_ids = {id(p) for p in gate_params + branch_params}
+        base_params = [
+            p for p in trainable_params if id(p) not in token_rel_param_ids
+        ]
+        opt_param_groups = []
+        if base_params:
+            opt_param_groups.append(
+                {"params": base_params, "lr": lr, "name": "base"}
+            )
+        if branch_params:
+            opt_param_groups.append(
+                {"params": branch_params, "lr": lr, "name": "token_rel_branch"}
+            )
+        if gate_params:
+            opt_param_groups.append(
+                {
+                    "params": gate_params,
+                    "lr": token_rel_gate_lr,
+                    "name": "token_rel_gate",
+                }
+            )
+    else:
+        opt_param_groups = [{"params": trainable_params, "lr": lr, "name": "all"}]
+
     opt = optim.AdamW(
-        net.parameters(),
-        lr=lr,
+        opt_param_groups,
         weight_decay=wd,
         betas=(0.9, 0.999),
         eps=1e-8,
@@ -197,16 +266,16 @@ def main(
     if lr_schedule:
         lrs = optim.lr_scheduler.OneCycleLR(
             opt,
-            max_lr=lr,
+            max_lr=[group["lr"] for group in opt.param_groups],
             total_steps=max_steps,
             pct_start=0.2,
             anneal_strategy="linear",
         )
 
-    if ddp:
-        net = DDP(net)
+    # if ddp:
+    #     net = DDP(net)
 
-    net = torch.compile(net, dynamic=False, disable=not compile_)
+    # net = torch.compile(net, dynamic=False, disable=not compile_)
 
     steps = 0
     if rank == 0:
@@ -333,8 +402,16 @@ def main(
                         metric = r2_score(labels, preds)
                     elif task_type == "clf":
                         metric_name = "auc"
-                        labels = [int(x > 0) for x in labels]
-                        metric = roc_auc_score(labels, preds)
+                        labels = np.array([int(x > 0) for x in labels])
+                        if np.unique(labels).size < 2:
+                            metric = float("nan")
+                            print(
+                                f"\nstep={steps}, \t"
+                                f"auc/{db_name}/{table_name}/{split}: undefined "
+                                "because only one class is present in y_true"
+                            )
+                        else:
+                            metric = roc_auc_score(labels, preds)
 
                     k = f"{metric_name}/{db_name}/{table_name}/{split}"
                     wandb.log({k: metric}, step=steps)
@@ -406,7 +483,7 @@ def main(
             if rank == 0:
                 wandb.log({"load_time": load_time}, step=steps)
 
-            loss, _yhat_dict = net(batch)
+            loss, yhat_dict = net(batch)
             opt.zero_grad(set_to_none=True)
             loss.backward()
 
@@ -426,15 +503,23 @@ def main(
             if ddp:
                 dist.all_reduce(loss, op=dist.ReduceOp.AVG)
             if rank == 0:
-                wandb.log(
-                    {
-                        "loss": loss,
-                        "lr": opt.param_groups[0]["lr"],
-                        "epochs": steps / len(loader),
-                        "grad_norm": grad_norm,
-                    },
-                    step=steps,
-                )
+                log_dict = {
+                    "loss": loss,
+                    "lr": opt.param_groups[0]["lr"],
+                    "epochs": steps / len(loader),
+                    "grad_norm": grad_norm,
+                }
+                for group in opt.param_groups:
+                    log_dict[f"lr/{group['name']}"] = group["lr"]
+                if "_loss_main" in yhat_dict:
+                    log_dict["loss/main"] = yhat_dict["_loss_main"]
+                if "_loss_aux" in yhat_dict:
+                    log_dict["loss/aux"] = yhat_dict["_loss_aux"]
+                if "_token_rel_gate_mean" in yhat_dict:
+                    log_dict["token_rel/gate_mean"] = yhat_dict[
+                        "_token_rel_gate_mean"
+                    ]
+                wandb.log(log_dict, step=steps)
 
             pbar.update(1)
 

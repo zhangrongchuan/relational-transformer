@@ -13,6 +13,8 @@ from torch import nn
 from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 
+from rt.ultra_graph import build_ultra_token_graph
+
 allow_ops_in_compiled_graph()
 flex_attention = torch.compile(flex_attention)
 
@@ -109,6 +111,11 @@ class RelationalTransformer(nn.Module):
         d_text,
         num_heads,
         d_ff,
+        use_token_rel=False,
+        token_rel_num_layers=4,
+        token_rel_hidden_dim=256,
+        same_col_max_neighbors=32,
+        token_rel_aux_weight=0.0,
     ):
         super().__init__()
 
@@ -149,6 +156,89 @@ class RelationalTransformer(nn.Module):
         )
         self.norm_out = nn.RMSNorm(d_model)
         self.d_model = d_model
+        self.use_token_rel = use_token_rel
+        self.same_col_max_neighbors = same_col_max_neighbors
+        self.token_rel_aux_weight = token_rel_aux_weight
+
+        if use_token_rel:
+            from rt.token_rel_nbfnet import TokenRelNBFNetBranch
+
+            self.token_rel_branch = TokenRelNBFNetBranch(
+                output_dim=d_model,
+                hidden_dim=token_rel_hidden_dim,
+                num_layers=token_rel_num_layers,
+            )
+            self.token_rel_gate = nn.Linear(d_model, 1)
+            nn.init.zeros_(self.token_rel_gate.weight)
+            nn.init.constant_(self.token_rel_gate.bias, -4.0)
+        else:
+            self.token_rel_branch = None
+            self.token_rel_gate = None
+
+    def keep_token_rel_float(self):
+        if self.token_rel_branch is not None:
+            self.token_rel_branch.float()
+        return self
+
+    def freeze_rt_parameters(self):
+        if self.token_rel_branch is None:
+            raise ValueError("freeze_rt_parameters requires use_token_rel=True.")
+        for param in self.parameters():
+            param.requires_grad_(False)
+        for param in self.token_rel_branch.parameters():
+            param.requires_grad_(True)
+        for param in self.token_rel_gate.parameters():
+            param.requires_grad_(True)
+        return self
+
+    def _apply_token_rel_branch(self, batch, x):
+        token_graph = build_ultra_token_graph(
+            batch,
+            same_col_max_neighbors=self.same_col_max_neighbors,
+        )
+        h_struct = self.token_rel_branch(token_graph).to(dtype=x.dtype)
+        gate = torch.sigmoid(self.token_rel_gate(x))
+        return x + gate * h_struct, h_struct, gate
+
+    def _prediction_loss(self, x, batch, return_yhat):
+        loss_out = x.new_zeros(())
+        yhat_out = (
+            {"number": None, "text": None, "datetime": None, "boolean": None}
+            if return_yhat
+            else None
+        )
+
+        sem_types = batch["sem_types"]  # (B,S) ints 0..3
+        masks = batch["masks"].bool()  # (B,S) where to train
+
+        for i, t in enumerate(["number", "text", "datetime", "boolean"]):
+            yhat = self.dec_dict[t](x)  # (B,S, D_t)
+            y = batch[f"{t}_values"]  # (B,S, D_y)
+            sem_type_mask = (sem_types == i) & masks  # (B,S) mask for this type
+
+            if not sem_type_mask.any():
+                if return_yhat:
+                    # still touch the param to avoid unused param error
+                    loss_out = loss_out + (yhat.sum() * 0.0)
+                    yhat_out[t] = yhat
+                continue
+
+            if t in ("number", "datetime"):
+                loss_t = F.huber_loss(yhat, y, reduction="none").mean(-1)
+            elif t == "boolean":
+                loss_t = F.binary_cross_entropy_with_logits(
+                    yhat, (y > 0).float(), reduction="none"
+                ).mean(-1)
+            elif t == "text":
+                raise ValueError("masking text not supported")
+
+            loss_out = loss_out + (loss_t * sem_type_mask).sum()
+
+            if return_yhat:
+                yhat_out[t] = yhat
+
+        loss_out = loss_out / masks.sum()
+        return loss_out, yhat_out
 
     def forward(self, batch):
         node_idxs = batch["node_idxs"]
@@ -156,7 +246,6 @@ class RelationalTransformer(nn.Module):
         col_name_idxs = batch["col_name_idxs"]
         table_name_idxs = batch["table_name_idxs"]
         is_padding = batch["is_padding"]
-        batch_size, seq_len = node_idxs.shape
 
         batch_size, seq_len = node_idxs.shape
         device = node_idxs.device
@@ -227,45 +316,28 @@ class RelationalTransformer(nn.Module):
             x = block(x, block_masks)
 
         x = self.norm_out(x)
-        print(f"Final x shape: {x.shape}")
-        # print(f"Final x:", x)
+        h_struct = None
+        gate = None
+        if self.use_token_rel:
+            x, h_struct, gate = self._apply_token_rel_branch(batch, x)
 
-        loss_out = x.new_zeros(())
-        yhat_out = {"number": None, "text": None, "datetime": None, "boolean": None}
+        loss_out, yhat_out = self._prediction_loss(x, batch, return_yhat=True)
+        if gate is not None:
+            yhat_out["_token_rel_gate_mean"] = gate.detach().mean()
 
-        B, S, _ = x.shape
-        sem_types = batch["sem_types"]  # (B,S) ints 0..3
-        masks = batch["masks"].bool()  # (B,S) where to train
-
-        for i, t in enumerate(["number", "text", "datetime", "boolean"]):
-            yhat = self.dec_dict[t](x)  # (B,S, D_t)
-            # print(f"{t} yhat:", yhat)
-            print(f"{t} yhat shape:", yhat.shape)
-            y = batch[f"{t}_values"]  # (B,S, D_y)
-            sem_type_mask = (sem_types == i) & masks  # (B,S) mask for this type
-
-            if not sem_type_mask.any():
-                if t in yhat_out:
-                    # still touch the param to avoid unused param error
-                    loss_out = loss_out + (yhat.sum() * 0.0)
-                    yhat_out[t] = yhat
-                continue
-
-            if t in ("number", "datetime"):
-                loss_t = F.huber_loss(yhat, y, reduction="none").mean(-1)
-            elif t == "boolean":
-                loss_t = F.binary_cross_entropy_with_logits(
-                    yhat, (y > 0).float(), reduction="none"
-                ).mean(-1)
-            elif t == "text":
-                raise ValueError("masking text not supported")
-
-            # masked sum for this type
-            loss_out = loss_out + (loss_t * sem_type_mask).sum()
-
-            if t in yhat_out:
-                yhat_out[t] = yhat
-
-        loss_out = loss_out / masks.sum()
+        if (
+            self.training
+            and h_struct is not None
+            and self.token_rel_aux_weight > 0.0
+        ):
+            main_loss = loss_out
+            aux_loss, _ = self._prediction_loss(
+                h_struct,
+                batch,
+                return_yhat=False,
+            )
+            loss_out = main_loss + self.token_rel_aux_weight * aux_loss
+            yhat_out["_loss_main"] = main_loss.detach()
+            yhat_out["_loss_aux"] = aux_loss.detach()
 
         return loss_out, yhat_out

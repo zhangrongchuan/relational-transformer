@@ -10,3 +10,4 @@ doc.md
 data_analysis.ipynb
 *.sh
 *.log
+pretrain_ckpts
