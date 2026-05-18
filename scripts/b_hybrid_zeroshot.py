@@ -41,14 +41,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--heldout", required=True, choices=list(RT_CKPT_BY_HELDOUT.keys()),
     )
-    parser.add_argument("--pretrain_steps", type=int, default=2000)
+    parser.add_argument("--pretrain_steps", type=int, default=5000)
+    parser.add_argument("--warmup_steps", type=int, default=500)
     parser.add_argument("--eval_freq", type=int, default=200)
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=42)
     # max_eval_steps × batch_size matches the RT paper's ~10,240-sample
     # subsample (RT example_pretrain uses batch_size=256, max_eval_steps=40).
-    parser.add_argument("--max_eval_steps", type=int, default=160)
+    parser.add_argument("--max_eval_steps", type=int, default=640)
     args = parser.parse_args()
 
     hybrid_main(
@@ -74,15 +75,16 @@ if __name__ == "__main__":
         rt_num_heads=8,
         rt_d_ff=1024,
         # ULTRA-side
-        hidden_dim=128,
-        num_layers=3,
-        num_rel_layers=2,
-        dropout=0.05,
+        hidden_dim=256,
+        num_layers=4,
+        num_rel_layers=3,
+        dropout=0.15,
         # optimization
         lr=args.lr,
         wd=0.01,
         max_grad_norm=1.0,
         max_steps=args.pretrain_steps,
+        warmup_steps=args.warmup_steps,
         # eval
         eval_freq=args.eval_freq,
         max_eval_steps=args.max_eval_steps,

@@ -180,6 +180,7 @@ def hybrid_main(
     wd=0.01,
     max_grad_norm=1.0,
     max_steps=2000,
+    warmup_steps=0,
     # eval
     eval_freq=200,
     max_eval_steps=160,
@@ -221,6 +222,7 @@ def hybrid_main(
             "d_text": d_text,
             "seq_len": seq_len,
             "rt_ckpt_path": rt_ckpt_path,
+            "warmup_steps": warmup_steps,
         },
     )
     wandb.define_metric("loss/*", summary="min")
@@ -262,7 +264,18 @@ def hybrid_main(
 
     trainable = [p for p in net.parameters() if p.requires_grad]
     opt = optim.AdamW(trainable, lr=lr, weight_decay=wd)
-    sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max_steps)
+    if warmup_steps > 0:
+        warmup_sched = optim.lr_scheduler.LinearLR(
+            opt, start_factor=1e-3, end_factor=1.0, total_iters=warmup_steps,
+        )
+        cosine_sched = optim.lr_scheduler.CosineAnnealingLR(
+            opt, T_max=max(1, max_steps - warmup_steps),
+        )
+        sched = optim.lr_scheduler.SequentialLR(
+            opt, [warmup_sched, cosine_sched], milestones=[warmup_steps],
+        )
+    else:
+        sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max_steps)
 
     if save_ckpt_dir is not None:
         save_dir = Path(save_ckpt_dir).expanduser()
