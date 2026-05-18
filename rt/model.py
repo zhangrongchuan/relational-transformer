@@ -13,8 +13,6 @@ from torch import nn
 from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 
-from rt.ultra_graph import build_ultra_token_graph
-
 allow_ops_in_compiled_graph()
 flex_attention = torch.compile(flex_attention)
 
@@ -41,6 +39,13 @@ class MaskedAttention(nn.Module):
         if block_mask is None:
             with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
                 x = F.scaled_dot_product_attention(q, k, v)
+        elif isinstance(block_mask, torch.Tensor):
+            x = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=block_mask[:, None, :, :],
+            )
         else:
             x = flex_attention(q, k, v, block_mask=block_mask)
 
@@ -111,11 +116,6 @@ class RelationalTransformer(nn.Module):
         d_text,
         num_heads,
         d_ff,
-        use_token_rel=False,
-        token_rel_num_layers=4,
-        token_rel_hidden_dim=256,
-        same_col_max_neighbors=32,
-        token_rel_aux_weight=0.0,
     ):
         super().__init__()
 
@@ -156,49 +156,28 @@ class RelationalTransformer(nn.Module):
         )
         self.norm_out = nn.RMSNorm(d_model)
         self.d_model = d_model
-        self.use_token_rel = use_token_rel
-        self.same_col_max_neighbors = same_col_max_neighbors
-        self.token_rel_aux_weight = token_rel_aux_weight
+        self.d_text = d_text
 
-        if use_token_rel:
-            from rt.token_rel_nbfnet import TokenRelNBFNetBranch
-
-            self.token_rel_branch = TokenRelNBFNetBranch(
-                output_dim=d_model,
-                hidden_dim=token_rel_hidden_dim,
-                num_layers=token_rel_num_layers,
-            )
-            self.token_rel_gate = nn.Linear(d_model, 1)
-            nn.init.zeros_(self.token_rel_gate.weight)
-            nn.init.constant_(self.token_rel_gate.bias, -4.0)
-        else:
-            self.token_rel_branch = None
-            self.token_rel_gate = None
-
-    def keep_token_rel_float(self):
-        if self.token_rel_branch is not None:
-            self.token_rel_branch.float()
-        return self
-
-    def freeze_rt_parameters(self):
-        if self.token_rel_branch is None:
-            raise ValueError("freeze_rt_parameters requires use_token_rel=True.")
+    def freeze_rt_parameters(
+        self,
+        unfreeze_last_n_blocks=0,
+        unfreeze_decoder=True,
+        unfreeze_norm_out=True,
+    ):
         for param in self.parameters():
             param.requires_grad_(False)
-        for param in self.token_rel_branch.parameters():
-            param.requires_grad_(True)
-        for param in self.token_rel_gate.parameters():
-            param.requires_grad_(True)
-        return self
 
-    def _apply_token_rel_branch(self, batch, x):
-        token_graph = build_ultra_token_graph(
-            batch,
-            same_col_max_neighbors=self.same_col_max_neighbors,
-        )
-        h_struct = self.token_rel_branch(token_graph).to(dtype=x.dtype)
-        gate = torch.sigmoid(self.token_rel_gate(x))
-        return x + gate * h_struct, h_struct, gate
+        if unfreeze_last_n_blocks > 0:
+            for block in self.blocks[-unfreeze_last_n_blocks:]:
+                for param in block.parameters():
+                    param.requires_grad_(True)
+        if unfreeze_decoder:
+            for param in self.dec_dict.parameters():
+                param.requires_grad_(True)
+        if unfreeze_norm_out:
+            for param in self.norm_out.parameters():
+                param.requires_grad_(True)
+        return self
 
     def _prediction_loss(self, x, batch, return_yhat):
         loss_out = x.new_zeros(())
@@ -240,7 +219,7 @@ class RelationalTransformer(nn.Module):
         loss_out = loss_out / masks.sum()
         return loss_out, yhat_out
 
-    def forward(self, batch):
+    def forward(self, batch, step=None):
         node_idxs = batch["node_idxs"]
         f2p_nbr_idxs = batch["f2p_nbr_idxs"]
         col_name_idxs = batch["col_name_idxs"]
@@ -283,16 +262,20 @@ class RelationalTransformer(nn.Module):
         for l in attn_masks:
             attn_masks[l] = attn_masks[l].contiguous()
 
-        # Convert to block masks
-        make_block_mask = partial(
-            _make_block_mask,
-            batch_size=batch_size,
-            seq_len=seq_len,
-            device=device,
-        )
-        block_masks = {
-            l: make_block_mask(attn_mask) for l, attn_mask in attn_masks.items()
-        }
+        if device.type == "cuda":
+            # Convert to flex-attention block masks on GPU. On CPU, dense SDPA is
+            # more reliable and only used for small smoke/debug runs.
+            make_block_mask = partial(
+                _make_block_mask,
+                batch_size=batch_size,
+                seq_len=seq_len,
+                device=device,
+            )
+            block_masks = {
+                l: make_block_mask(attn_mask) for l, attn_mask in attn_masks.items()
+            }
+        else:
+            block_masks = attn_masks
 
         x = 0
         x = x + (
@@ -312,32 +295,10 @@ class RelationalTransformer(nn.Module):
                 * ((batch["sem_types"] == i) & batch["masks"] & ~is_padding)[..., None]
             )
 
-        for i, block in enumerate(self.blocks):
+        for block in self.blocks:
             x = block(x, block_masks)
 
         x = self.norm_out(x)
-        h_struct = None
-        gate = None
-        if self.use_token_rel:
-            x, h_struct, gate = self._apply_token_rel_branch(batch, x)
 
         loss_out, yhat_out = self._prediction_loss(x, batch, return_yhat=True)
-        if gate is not None:
-            yhat_out["_token_rel_gate_mean"] = gate.detach().mean()
-
-        if (
-            self.training
-            and h_struct is not None
-            and self.token_rel_aux_weight > 0.0
-        ):
-            main_loss = loss_out
-            aux_loss, _ = self._prediction_loss(
-                h_struct,
-                batch,
-                return_yhat=False,
-            )
-            loss_out = main_loss + self.token_rel_aux_weight * aux_loss
-            yhat_out["_loss_main"] = main_loss.detach()
-            yhat_out["_loss_aux"] = aux_loss.detach()
-
         return loss_out, yhat_out

@@ -9,15 +9,15 @@ if __name__ == "__main__":
         eval_freq=100,
         eval_pow2=True,
         max_eval_steps=40,
-        load_ckpt_path="ckpts/leave_rel-amazon/rel-amazon_user-churn_best.pt",
-        save_ckpt_dir="ckpts/contd_rel-amazon_user-churn/",
+        load_ckpt_path="~/scratch/rt_ckpts/contd-pretrain_rel-amazon_item-churn.pt",
+        save_ckpt_dir="ckpts/contd_rel-amazon_item-churn/",
         compile_=True,
         seed=0,
         # data
         train_tasks=[
-            t for t in all_tasks if t[0] == "rel-amazon" and t[1] != "user-churn"
+            t for t in all_tasks if t[0] == "rel-amazon" and t[1] != "item-churn"
         ],
-        eval_tasks=[("rel-amazon", "user-churn", "churn", [])],
+        eval_tasks=[("rel-amazon", "item-churn", "churn", [])],
         batch_size=32,
         num_workers=8,
         max_bfs_width=256,

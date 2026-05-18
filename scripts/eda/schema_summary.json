@@ -1,0 +1,432 @@
+{
+  "rel-amazon": {
+    "n_tables": 3,
+    "n_fks": 2,
+    "tables": {
+      "review": {
+        "rows": 20862040,
+        "cols": 7
+      },
+      "customer": {
+        "rows": 1850193,
+        "cols": 2
+      },
+      "product": {
+        "rows": 506012,
+        "cols": 6
+      }
+    },
+    "tasks": [
+      {
+        "task": "item-churn",
+        "auc": 70.9,
+        "entity": "product",
+        "target_col": "churn",
+        "n_train": 2536014,
+        "pos_rate": 0.43346448402887366,
+        "n_entities": 393155,
+        "distances": {
+          "product": 0,
+          "review": 1,
+          "customer": 2
+        },
+        "diameter": 2,
+        "unreachable": []
+      },
+      {
+        "task": "user-churn",
+        "auc": 64.0,
+        "entity": "customer",
+        "target_col": "churn",
+        "n_train": 4708383,
+        "pos_rate": 0.6239566747225109,
+        "n_entities": 1486748,
+        "distances": {
+          "customer": 0,
+          "review": 1,
+          "product": 2
+        },
+        "diameter": 2,
+        "unreachable": []
+      }
+    ]
+  },
+  "rel-avito": {
+    "n_tables": 8,
+    "n_fks": 11,
+    "tables": {
+      "Category": {
+        "rows": 68,
+        "cols": 4
+      },
+      "PhoneRequestsStream": {
+        "rows": 302974,
+        "cols": 4
+      },
+      "VisitStream": {
+        "rows": 6454562,
+        "cols": 4
+      },
+      "SearchStream": {
+        "rows": 9254702,
+        "cols": 7
+      },
+      "Location": {
+        "rows": 3512,
+        "cols": 4
+      },
+      "UserInfo": {
+        "rows": 98250,
+        "cols": 5
+      },
+      "SearchInfo": {
+        "rows": 2579289,
+        "cols": 8
+      },
+      "AdsInfo": {
+        "rows": 5960558,
+        "cols": 6
+      }
+    },
+    "tasks": [
+      {
+        "task": "user-clicks",
+        "auc": 59.5,
+        "entity": "UserInfo",
+        "target_col": "num_click",
+        "n_train": 59454,
+        "pos_rate": 0.038719009654522824,
+        "n_entities": 34575,
+        "distances": {
+          "UserInfo": 0,
+          "PhoneRequestsStream": 1,
+          "VisitStream": 1,
+          "SearchInfo": 1,
+          "AdsInfo": 2,
+          "SearchStream": 2,
+          "Location": 2,
+          "Category": 2
+        },
+        "diameter": 2,
+        "unreachable": []
+      },
+      {
+        "task": "user-visits",
+        "auc": 61.8,
+        "entity": "UserInfo",
+        "target_col": "num_click",
+        "n_train": 86619,
+        "pos_rate": 0.9058866992230342,
+        "n_entities": 44968,
+        "distances": {
+          "UserInfo": 0,
+          "PhoneRequestsStream": 1,
+          "VisitStream": 1,
+          "SearchInfo": 1,
+          "AdsInfo": 2,
+          "SearchStream": 2,
+          "Location": 2,
+          "Category": 2
+        },
+        "diameter": 2,
+        "unreachable": []
+      }
+    ]
+  },
+  "rel-f1": {
+    "n_tables": 9,
+    "n_fks": 13,
+    "tables": {
+      "races": {
+        "rows": 1101,
+        "cols": 7
+      },
+      "drivers": {
+        "rows": 857,
+        "cols": 7
+      },
+      "constructor_standings": {
+        "rows": 13051,
+        "cols": 7
+      },
+      "standings": {
+        "rows": 34124,
+        "cols": 7
+      },
+      "constructors": {
+        "rows": 211,
+        "cols": 4
+      },
+      "constructor_results": {
+        "rows": 12290,
+        "cols": 5
+      },
+      "circuits": {
+        "rows": 77,
+        "cols": 8
+      },
+      "qualifying": {
+        "rows": 9815,
+        "cols": 7
+      },
+      "results": {
+        "rows": 26080,
+        "cols": 15
+      }
+    },
+    "tasks": [
+      {
+        "task": "driver-dnf",
+        "auc": 81.2,
+        "entity": "drivers",
+        "target_col": "did_not_finish",
+        "n_train": 11411,
+        "pos_rate": 0.8803785820699325,
+        "n_entities": 780,
+        "distances": {
+          "drivers": 0,
+          "standings": 1,
+          "qualifying": 1,
+          "results": 1,
+          "races": 2,
+          "constructors": 2,
+          "circuits": 3,
+          "constructor_standings": 3,
+          "constructor_results": 3
+        },
+        "diameter": 3,
+        "unreachable": []
+      },
+      {
+        "task": "driver-top3",
+        "auc": 89.3,
+        "entity": "drivers",
+        "target_col": "qualifying",
+        "n_train": 1353,
+        "pos_rate": 0.17073170731707318,
+        "n_entities": 92,
+        "distances": {
+          "drivers": 0,
+          "standings": 1,
+          "qualifying": 1,
+          "results": 1,
+          "races": 2,
+          "constructors": 2,
+          "circuits": 3,
+          "constructor_standings": 3,
+          "constructor_results": 3
+        },
+        "diameter": 3,
+        "unreachable": []
+      }
+    ]
+  },
+  "rel-hm": {
+    "n_tables": 3,
+    "n_fks": 2,
+    "tables": {
+      "article": {
+        "rows": 105542,
+        "cols": 25
+      },
+      "customer": {
+        "rows": 1371980,
+        "cols": 7
+      },
+      "transactions": {
+        "rows": 15453651,
+        "cols": 5
+      }
+    },
+    "tasks": [
+      {
+        "task": "user-churn",
+        "auc": 62.8,
+        "entity": "customer",
+        "target_col": "churn",
+        "n_train": 3832692,
+        "pos_rate": 0.8187323687893522,
+        "n_entities": 983616,
+        "distances": {
+          "customer": 0,
+          "transactions": 1,
+          "article": 2
+        },
+        "diameter": 2,
+        "unreachable": []
+      }
+    ]
+  },
+  "rel-stack": {
+    "n_tables": 7,
+    "n_fks": 11,
+    "tables": {
+      "comments": {
+        "rows": 794597,
+        "cols": 7
+      },
+      "badges": {
+        "rows": 590833,
+        "cols": 6
+      },
+      "postLinks": {
+        "rows": 103969,
+        "cols": 5
+      },
+      "postHistory": {
+        "rows": 1486886,
+        "cols": 10
+      },
+      "votes": {
+        "rows": 1673836,
+        "cols": 5
+      },
+      "users": {
+        "rows": 333784,
+        "cols": 8
+      },
+      "posts": {
+        "rows": 415913,
+        "cols": 10
+      }
+    },
+    "tasks": [
+      {
+        "task": "user-badge",
+        "auc": 80.1,
+        "entity": "users",
+        "target_col": "WillGetBadge",
+        "n_train": 3386276,
+        "pos_rate": 0.048149648758695394,
+        "n_entities": 239945,
+        "distances": {
+          "users": 0,
+          "comments": 1,
+          "badges": 1,
+          "postHistory": 1,
+          "votes": 1,
+          "posts": 1,
+          "postLinks": 2
+        },
+        "diameter": 2,
+        "unreachable": []
+      },
+      {
+        "task": "user-engagement",
+        "auc": 75.7,
+        "entity": "users",
+        "target_col": "contribution",
+        "n_train": 1360850,
+        "pos_rate": 0.04998346621596796,
+        "n_entities": 83531,
+        "distances": {
+          "users": 0,
+          "comments": 1,
+          "badges": 1,
+          "postHistory": 1,
+          "votes": 1,
+          "posts": 1,
+          "postLinks": 2
+        },
+        "diameter": 2,
+        "unreachable": []
+      }
+    ]
+  },
+  "rel-trial": {
+    "n_tables": 15,
+    "n_fks": 15,
+    "tables": {
+      "designs": {
+        "rows": 272521,
+        "cols": 15
+      },
+      "eligibilities": {
+        "rows": 273160,
+        "cols": 15
+      },
+      "studies": {
+        "rows": 273160,
+        "cols": 29
+      },
+      "drop_withdrawals": {
+        "rows": 440547,
+        "cols": 6
+      },
+      "conditions_studies": {
+        "rows": 440543,
+        "cols": 4
+      },
+      "sponsors": {
+        "rows": 53241,
+        "cols": 3
+      },
+      "outcomes": {
+        "rows": 476790,
+        "cols": 12
+      },
+      "reported_event_totals": {
+        "rows": 435129,
+        "cols": 7
+      },
+      "facilities_studies": {
+        "rows": 1867226,
+        "cols": 4
+      },
+      "conditions": {
+        "rows": 3973,
+        "cols": 2
+      },
+      "sponsors_studies": {
+        "rows": 425014,
+        "cols": 5
+      },
+      "outcome_analyses": {
+        "rows": 254420,
+        "cols": 26
+      },
+      "interventions_studies": {
+        "rows": 179738,
+        "cols": 4
+      },
+      "facilities": {
+        "rows": 453233,
+        "cols": 6
+      },
+      "interventions": {
+        "rows": 3462,
+        "cols": 2
+      }
+    },
+    "tasks": [
+      {
+        "task": "study-outcome",
+        "auc": 51.8,
+        "entity": "studies",
+        "target_col": "outcome",
+        "n_train": 11994,
+        "pos_rate": 0.6375687843921961,
+        "n_entities": 11994,
+        "distances": {
+          "studies": 0,
+          "designs": 1,
+          "eligibilities": 1,
+          "drop_withdrawals": 1,
+          "conditions_studies": 1,
+          "outcomes": 1,
+          "reported_event_totals": 1,
+          "facilities_studies": 1,
+          "sponsors_studies": 1,
+          "outcome_analyses": 1,
+          "interventions_studies": 1,
+          "conditions": 2,
+          "facilities": 2,
+          "sponsors": 2,
+          "interventions": 2
+        },
+        "diameter": 2,
+        "unreachable": []
+      }
+    ]
+  }
+}
