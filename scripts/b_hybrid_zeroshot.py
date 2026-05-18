@@ -87,4 +87,7 @@ if __name__ == "__main__":
         eval_freq=args.eval_freq,
         max_eval_steps=args.max_eval_steps,
         loss_log_freq=50,
+        # checkpointing — saves best_val and best_test ckpts per eval task
+        # (trainable params only, ~1.2MB each).
+        save_ckpt_dir=f"ckpts/hybrid_zeroshot/leave_{args.heldout}",
     )

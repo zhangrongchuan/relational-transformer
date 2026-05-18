@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import random
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -31,6 +32,29 @@ from tqdm.auto import tqdm
 
 from rt.data import RelationalDataset
 from rt.ultra_row_hybrid import UltraRowHybrid
+
+
+def _save_trainable(net, path):
+    """Save only the trainable (ULTRA-side) parameters.
+
+    RT is frozen and identical to the input ckpt, so re-saving its
+    22M params on every eval would waste ~90MB per ckpt. We save only
+    the ~313K trainable ULTRA-side params (~1.2MB per ckpt).
+
+    Reload:
+        net = UltraRowHybrid(rt_ckpt_path=..., freeze_rt=True)
+        state = torch.load(path, map_location="cpu", weights_only=True)
+        net.load_state_dict(state, strict=False)  # RT keys missing — that's expected
+    """
+    trainable_names = {
+        name for name, p in net.named_parameters() if p.requires_grad
+    }
+    state = {
+        k: v.detach().cpu().clone()
+        for k, v in net.state_dict().items()
+        if k in trainable_names
+    }
+    torch.save(state, path)
 
 
 def _seed_everything(seed):
@@ -160,6 +184,8 @@ def hybrid_main(
     eval_freq=200,
     max_eval_steps=160,
     loss_log_freq=50,
+    # checkpointing — if set, saves best-val and best-test ckpts per eval task
+    save_ckpt_dir=None,
 ):
     _seed_everything(seed)
 
@@ -238,7 +264,15 @@ def hybrid_main(
     opt = optim.AdamW(trainable, lr=lr, weight_decay=wd)
     sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max_steps)
 
-    best_by_task = {}  # (db, table) -> (best_val, test_at_best_val, step)
+    if save_ckpt_dir is not None:
+        save_dir = Path(save_ckpt_dir).expanduser()
+        save_dir.mkdir(parents=True, exist_ok=True)
+        print(f"save_ckpt_dir: {save_dir}")
+    else:
+        save_dir = None
+
+    best_by_task = {}       # (db, table) -> (best_val,  test_at_best_val, step)
+    best_test_by_task = {}  # (db, table) -> (best_test, val_at_best_test, step)
 
     def do_eval(step):
         net.eval()
@@ -260,6 +294,7 @@ def hybrid_main(
                 {f"auc/{db}_{t}_val": val, f"auc/{db}_{t}_test": test},
                 step=step,
             )
+            # best-val tracking (standard ML protocol)
             prev = best_by_task.get((db, t), (-float("inf"), -float("inf"), -1))
             if val > prev[0]:
                 best_by_task[(db, t)] = (val, test, step)
@@ -270,6 +305,21 @@ def hybrid_main(
                     },
                     step=step,
                 )
+                if save_dir is not None:
+                    _save_trainable(net, save_dir / f"{db}_{t}_best_val.pt")
+            # best-test tracking (for thesis upper-bound comparison)
+            prev_t = best_test_by_task.get((db, t), (-float("inf"), -float("inf"), -1))
+            if test > prev_t[0]:
+                best_test_by_task[(db, t)] = (test, val, step)
+                wandb.log(
+                    {
+                        f"auc/{db}_{t}_best_test": test,
+                        f"auc/{db}_{t}_val_at_best_test": val,
+                    },
+                    step=step,
+                )
+                if save_dir is not None:
+                    _save_trainable(net, save_dir / f"{db}_{t}_best_test.pt")
 
     print("\n" + "=" * 70)
     print(f"ZERO-SHOT PRETRAIN: {run_name}, {max_steps} steps")
@@ -306,8 +356,14 @@ def hybrid_main(
     print(f"SUMMARY for {run_name}")
     print("=" * 70)
     for (db, t), (vbest, ttest, vstep) in best_by_task.items():
-        print(
-            f"  {db}/{t}  best_zs_val={vbest:.4f}  "
-            f"zs_test_at_best={ttest:.4f}  (step {vstep})"
+        tbest, val_at_t, tstep = best_test_by_task.get(
+            (db, t), (float("nan"), float("nan"), -1)
         )
+        print(
+            f"  {db}/{t}\n"
+            f"    best_val ={vbest:.4f}  test_at_best_val={ttest:.4f}  (step {vstep})\n"
+            f"    best_test={tbest:.4f}  val_at_best_test={val_at_t:.4f}  (step {tstep})"
+        )
+    if save_dir is not None:
+        print(f"\n  ckpts saved to: {save_dir}")
     wandb.finish()
